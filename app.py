@@ -2,6 +2,27 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs
 from abc import ABC, abstractmethod
 import html
+import os
+import base64
+import uuid
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+SUPABASE_URL = os.getenv("SUPABASE_URL", "https://kwbnyltlonlakyfyluzl.supabase.co")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
+
+# Initialize Supabase Client
+supabase_client = None
+if SUPABASE_KEY and SUPABASE_KEY != "paste_your_anon_key_here":
+    try:
+        from supabase import create_client
+        supabase_client = create_client(SUPABASE_URL, SUPABASE_KEY)
+        print("Connected to Supabase successfully!")
+    except Exception as e:
+        print(f"Failed to connect to Supabase: {e}")
+else:
+    print("[NOTE] SUPABASE_KEY not set in .env. Running in local fallback mode.")
 
 # ==============================================================================
 # MEMBER 1: DATA MODELS & OOP PILLARS (Abstraction, Encapsulation, Inheritance)
@@ -55,6 +76,7 @@ class Item(BaseRecord):
 
 class PortalDatabase:
     def __init__(self):
+        self.supabase = supabase_client
         # Creating User Objects (Pre-loaded with 1 Admin and 2 Basic Users)
         self.users = {
             "admin@campus.edu": User("admin@campus.edu", "admin123", "Campus Admin", "admin"),
@@ -65,11 +87,80 @@ class PortalDatabase:
         self.next_id = 1
         self.logged_in_user = None  # Tracks active session user object
 
-        # Seed initial sample items (Object Construction)
-        self.add_item("Blue Water Bottle", "Steel bottle with sticker", "Library 2nd Floor", "Lost", "student1@campus.edu")
-        self.add_item("Scientific Calculator", "Casio fx-991EX", "Lab 304", "Found", "student2@campus.edu")
+        # Load initial items from Supabase or fallback
+        if self.supabase:
+            self.load_from_supabase()
+        else:
+            # Seed initial sample items (Object Construction)
+            self.add_item("Blue Water Bottle", "Steel bottle with sticker", "Library 2nd Floor", "Lost", "student1@campus.edu")
+            self.add_item("Scientific Calculator", "Casio fx-991EX", "Lab 304", "Found", "student2@campus.edu")
+
+    def _upload_image_to_supabase(self, image_data):
+        """Uploads base64 encoded image to Supabase Storage 'item-images' bucket and returns its public URL."""
+        if not self.supabase or not image_data or not image_data.startswith("data:image"):
+            return image_data
+
+        try:
+            header, base64_str = image_data.split(",", 1)
+            mime_type = "image/jpeg"
+            if ":" in header and ";" in header:
+                mime_type = header.split(":")[1].split(";")[0]
+
+            ext = mime_type.split("/")[-1] if "/" in mime_type else "jpg"
+            if ext == "jpeg":
+                ext = "jpg"
+
+            image_bytes = base64.b64decode(base64_str)
+            file_name = f"item_{uuid.uuid4().hex[:12]}.{ext}"
+
+            # Upload binary to Supabase Storage 'item-images'
+            print(f"[Supabase] Uploading image {file_name} to 'item-images' bucket...")
+            self.supabase.storage.from_("item-images").upload(
+                path=file_name,
+                file=image_bytes,
+                file_options={"content-type": mime_type}
+            )
+            # Retrieve the public URL
+            public_url = self.supabase.storage.from_("item-images").get_public_url(file_name)
+            print(f"[Supabase] Image uploaded successfully! URL: {public_url}")
+            return public_url
+        except Exception as e:
+            print(f"[Supabase Storage Error] {e}")
+            return image_data
+
+    def load_from_supabase(self):
+        """Loads records from Supabase 'items' and 'users' tables into OOP models."""
+        try:
+            # Load users
+            user_res = self.supabase.table("users").select("*").execute()
+            if user_res.data:
+                for u in user_res.data:
+                    self.users[u["email"]] = User(u["email"], u["password"], u["name"], u.get("role", "user"))
+
+            # Load items
+            item_res = self.supabase.table("items").select("*").order("created_at", desc=True).execute()
+            if item_res.data:
+                self.items = []
+                for it in item_res.data:
+                    new_item = Item(
+                        item_id=it["id"],
+                        title=it["title"],
+                        description=it.get("description", ""),
+                        location=it.get("location", ""),
+                        category=it.get("item_type", "Lost"),
+                        reported_by=it.get("reported_by", ""),
+                        image_data=it.get("image_url", "")
+                    )
+                    new_item.status = it.get("status", "Open")
+                    new_item.claimed_by = it.get("claimed_by")
+                    self.items.append(new_item)
+                if self.items:
+                    self.next_id = max(i.record_id for i in self.items) + 1
+        except Exception as e:
+            print(f"[Supabase Sync Error] Could not load data: {e}")
 
     def authenticate(self, email, password):
+        # Check in-memory user objects or Supabase
         user = self.users.get(email)
         if user and user.check_password(password):
             self.logged_in_user = user
@@ -77,26 +168,67 @@ class PortalDatabase:
         return False
 
     def add_item(self, title, description, location, category, reported_by, image_data=""):
-        # Object Construction: Instantiating a new Item object with optional image
-        new_item = Item(self.next_id, title, description, location, category, reported_by, image_data)
-        self.items.append(new_item)
-        self.next_id += 1
+        # 1. Upload image to Supabase Storage if connected
+        image_url = self._upload_image_to_supabase(image_data) if image_data else ""
+
+        # 2. Insert into Supabase table if connected
+        item_id = self.next_id
+        if self.supabase:
+            try:
+                res = self.supabase.table("items").insert({
+                    "title": title,
+                    "description": description,
+                    "location": location,
+                    "item_type": category,
+                    "reported_by": reported_by,
+                    "image_url": image_url,
+                    "status": "Open"
+                }).execute()
+                if res.data:
+                    item_id = res.data[0]["id"]
+            except Exception as e:
+                print(f"[Supabase Insert Error] {e}")
+
+        # 3. Object Construction: Instantiating Item object (maintaining OOP principles)
+        new_item = Item(item_id, title, description, location, category, reported_by, image_url)
+        self.items.insert(0, new_item)
+        self.next_id = max(self.next_id + 1, item_id + 1)
 
     def claim_item(self, item_id, claimant_email):
         for item in self.items:
             if item.record_id == item_id and item.status == "Open":
                 item.status = "Claimed"
                 item.claimed_by = claimant_email
+                if self.supabase:
+                    try:
+                        self.supabase.table("items").update({"status": "Claimed"}).eq("id", item_id).execute()
+                        self.supabase.table("claims").insert({
+                            "item_id": item_id,
+                            "claimant_email": claimant_email,
+                            "status": "Pending"
+                        }).execute()
+                    except Exception as e:
+                        print(f"[Supabase Claim Error] {e}")
                 break
 
     def resolve_item(self, item_id):
         for item in self.items:
             if item.record_id == item_id:
                 item.status = "Resolved"
+                if self.supabase:
+                    try:
+                        self.supabase.table("items").update({"status": "Resolved"}).eq("id", item_id).execute()
+                    except Exception as e:
+                        print(f"[Supabase Resolve Error] {e}")
                 break
 
     def delete_item(self, item_id):
         self.items = [item for item in self.items if item.record_id != item_id]
+        if self.supabase:
+            try:
+                self.supabase.table("items").delete().eq("id", item_id).execute()
+            except Exception as e:
+                print(f"[Supabase Delete Error] {e}")
 
     def search_items(self, query):
         if not query:
@@ -115,6 +247,20 @@ class PortalDatabase:
 class ViewRenderer:
     @staticmethod
     def layout(title, body_content):
+        # Connection status banner
+        if not supabase_client:
+            conn_banner = """
+            <div style="background: #fff3cd; color: #856404; padding: 10px 15px; border-radius: 4px; margin-bottom: 20px; border: 1px solid #ffeeba; font-size: 13px;">
+                ⚠️ <b>Supabase Storage Not Connected:</b> Add your <code>SUPABASE_KEY</code> to the <code>.env</code> file so uploaded photos are automatically saved to your Supabase <code>item-images</code> bucket.
+            </div>
+            """
+        else:
+            conn_banner = """
+            <div style="background: #d4edda; color: #155724; padding: 8px 15px; border-radius: 4px; margin-bottom: 15px; border: 1px solid #c3e6cb; font-size: 13px;">
+                🟢 <b>Supabase Connected:</b> Photos will automatically upload to your <code>item-images</code> storage bucket.
+            </div>
+            """
+
         # Minimalistic CSS + tiny JS helpers for confirmation and image encoding
         return f"""<!DOCTYPE html>
 <html>
@@ -154,6 +300,7 @@ class ViewRenderer:
     </script>
 </head>
 <body>
+    {conn_banner}
     {body_content}
 </body>
 </html>"""

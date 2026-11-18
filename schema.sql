@@ -26,8 +26,8 @@ CREATE TABLE IF NOT EXISTS public.users (
 -- ------------------------------------------------------------------------------
 -- 2. DROP OLD ITEMS TABLE / VIEW IF EXISTS
 -- ------------------------------------------------------------------------------
-DROP VIEW IF EXISTS public.items CASCADE;
 DROP TABLE IF EXISTS public.items CASCADE;
+DROP VIEW IF EXISTS public.items CASCADE;
 
 -- Shared sequence for globally unique IDs across lost_items and found_items
 CREATE SEQUENCE IF NOT EXISTS public.items_id_seq START WITH 1;

@@ -34,12 +34,13 @@ class User:
 
 # 3. INHERITANCE & POLYMORPHISM: Item inherits from BaseRecord
 class Item(BaseRecord):
-    def __init__(self, item_id, title, description, location, category, reported_by):
+    def __init__(self, item_id, title, description, location, category, reported_by, image_data=""):
         super().__init__(item_id, title)  # Calling Parent Class Constructor
         self.description = description
         self.location = location
         self.category = category          # "Lost" or "Found"
         self.reported_by = reported_by
+        self.image_data = image_data      # Stores optional Base64 image string
         self.status = "Open"              # "Open", "Claimed", or "Resolved"
         self.claimed_by = None
 
@@ -75,9 +76,9 @@ class PortalDatabase:
             return True
         return False
 
-    def add_item(self, title, description, location, category, reported_by):
-        # Object Construction: Instantiating a new Item object
-        new_item = Item(self.next_id, title, description, location, category, reported_by)
+    def add_item(self, title, description, location, category, reported_by, image_data=""):
+        # Object Construction: Instantiating a new Item object with optional image
+        new_item = Item(self.next_id, title, description, location, category, reported_by, image_data)
         self.items.append(new_item)
         self.next_id += 1
 
@@ -114,14 +115,14 @@ class PortalDatabase:
 class ViewRenderer:
     @staticmethod
     def layout(title, body_content):
-        # Minimalistic CSS + tiny JS confirmation helper
+        # Minimalistic CSS + tiny JS helpers for confirmation and image encoding
         return f"""<!DOCTYPE html>
 <html>
 <head>
     <meta charset="UTF-8">
     <title>{title}</title>
     <style>
-        body {{ font-family: Arial, sans-serif; max-width: 850px; margin: 30px auto; padding: 0 15px; background: #f9f9f9; color: #222; }}
+        body {{ font-family: Arial, sans-serif; max-width: 900px; margin: 30px auto; padding: 0 15px; background: #f9f9f9; color: #222; }}
         header {{ display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #333; padding-bottom: 10px; margin-bottom: 20px; }}
         .card {{ background: #fff; padding: 15px; border: 1px solid #ddd; border-radius: 5px; margin-bottom: 15px; }}
         input, select, button {{ padding: 8px; margin: 4px 0; border: 1px solid #ccc; border-radius: 4px; }}
@@ -131,13 +132,25 @@ class ViewRenderer:
         .btn-danger {{ background: #cc0000; }}
         .btn-success {{ background: #28a745; }}
         table {{ width: 100%; border-collapse: collapse; background: #fff; }}
-        th, td {{ padding: 10px; border: 1px solid #ddd; text-align: left; }}
+        th, td {{ padding: 10px; border: 1px solid #ddd; text-align: left; vertical-align: middle; }}
         th {{ background: #eee; }}
         .badge-Lost {{ color: #cc0000; font-weight: bold; }}
         .badge-Found {{ color: #28a745; font-weight: bold; }}
+        .item-img {{ width: 60px; height: 60px; object-fit: cover; border-radius: 4px; border: 1px solid #ccc; }}
     </style>
     <script>
         function confirmAction(msg) {{ return confirm(msg); }}
+
+        // Converts selected image file into a Base64 string for simple form submission
+        function encodeImage(input) {{
+            if (input.files && input.files[0]) {{
+                const reader = new FileReader();
+                reader.onload = function(e) {{
+                    document.getElementById('image_data').value = e.target.result;
+                }};
+                reader.readAsDataURL(input.files[0]);
+            }}
+        }}
     </script>
 </head>
 <body>
@@ -176,6 +189,8 @@ class ViewRenderer:
         for item in items:
             # Demonstrating Polymorphism: calling item.get_summary()
             summary_tip = html.escape(item.get_summary())
+            img_tag = f'<img src="{item.image_data}" class="item-img" alt="Item">' if item.image_data else "<small>No image</small>"
+
             action_btn = "-"
             if item.status == "Open" and item.reported_by != user.email:
                 action_btn = f"""
@@ -189,6 +204,7 @@ class ViewRenderer:
             rows += f"""
             <tr title="{summary_tip}">
                 <td><span class="badge-{item.category}">{item.category}</span></td>
+                <td>{img_tag}</td>
                 <td><b>{html.escape(item.title)}</b><br><small>{html.escape(item.description)}</small></td>
                 <td>{html.escape(item.location)}</td>
                 <td>{item.status}</td>
@@ -210,7 +226,10 @@ class ViewRenderer:
                 </select>
                 <input type="text" name="title" placeholder="Item Name (e.g., Keys)" required>
                 <input type="text" name="location" placeholder="Location (e.g., Canteen)" required>
-                <input type="text" name="description" placeholder="Short Description" required>
+                <input type="text" name="description" placeholder="Short Description" required><br>
+                <label><small>Optional Image:</small></label>
+                <input type="file" accept="image/*" onchange="encodeImage(this)">
+                <input type="hidden" name="image_data" id="image_data">
                 <button type="submit">Submit Report</button>
             </form>
         </div>
@@ -224,8 +243,8 @@ class ViewRenderer:
             </form>
             <br>
             <table>
-                <tr><th>Type</th><th>Item Details</th><th>Location</th><th>Status</th><th>Action</th></tr>
-                {rows if rows else "<tr><td colspan='5'>No items found.</td></tr>"}
+                <tr><th>Type</th><th>Photo</th><th>Item Details</th><th>Location</th><th>Status</th><th>Action</th></tr>
+                {rows if rows else "<tr><td colspan='6'>No items found.</td></tr>"}
             </table>
         </div>
         """
@@ -235,10 +254,12 @@ class ViewRenderer:
     def admin_dashboard(user, items):
         rows = ""
         for item in items:
+            img_tag = f'<img src="{item.image_data}" class="item-img" alt="Item">' if item.image_data else "<small>No image</small>"
             rows += f"""
             <tr>
                 <td>#{item.record_id}</td>
                 <td><span class="badge-{item.category}">{item.category}</span></td>
+                <td>{img_tag}</td>
                 <td><b>{html.escape(item.title)}</b> ({html.escape(item.location)})<br><small>By: {html.escape(item.reported_by)}</small></td>
                 <td>{item.status} {f'({html.escape(item.claimed_by)})' if item.claimed_by else ''}</td>
                 <td>
@@ -261,8 +282,8 @@ class ViewRenderer:
         <div class="card">
             <h3>All Portal Records ({len(items)})</h3>
             <table>
-                <tr><th>ID</th><th>Type</th><th>Item & Reporter</th><th>Status</th><th>Admin Controls</th></tr>
-                {rows if rows else "<tr><td colspan='5'>No records available.</td></tr>"}
+                <tr><th>ID</th><th>Type</th><th>Photo</th><th>Item & Reporter</th><th>Status</th><th>Admin Controls</th></tr>
+                {rows if rows else "<tr><td colspan='6'>No records available.</td></tr>"}
             </table>
         </div>
         """
@@ -291,7 +312,6 @@ class PortalHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
-        # Parse URL and query string
         path, _, query_string = self.path.partition("?")
         params = parse_qs(query_string)
 
@@ -338,7 +358,8 @@ class PortalHandler(BaseHTTPRequestHandler):
                 description=post_data.get("description", [""])[0],
                 location=post_data.get("location", [""])[0],
                 category=post_data.get("category", ["Lost"])[0],
-                reported_by=db.logged_in_user.email
+                reported_by=db.logged_in_user.email,
+                image_data=post_data.get("image_data", [""])[0]
             )
             self.redirect("/dashboard")
 

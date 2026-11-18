@@ -247,20 +247,6 @@ class PortalDatabase:
 class ViewRenderer:
     @staticmethod
     def layout(title, body_content):
-        # Connection status banner
-        if not supabase_client:
-            conn_banner = """
-            <div style="background: #fff3cd; color: #856404; padding: 10px 15px; border-radius: 4px; margin-bottom: 20px; border: 1px solid #ffeeba; font-size: 13px;">
-                ⚠️ <b>Supabase Storage Not Connected:</b> Add your <code>SUPABASE_KEY</code> to the <code>.env</code> file so uploaded photos are automatically saved to your Supabase <code>item-images</code> bucket.
-            </div>
-            """
-        else:
-            conn_banner = """
-            <div style="background: #d4edda; color: #155724; padding: 8px 15px; border-radius: 4px; margin-bottom: 15px; border: 1px solid #c3e6cb; font-size: 13px;">
-                🟢 <b>Supabase Connected:</b> Photos will automatically upload to your <code>item-images</code> storage bucket.
-            </div>
-            """
-
         # Minimalistic CSS + tiny JS helpers for confirmation and image encoding
         return f"""<!DOCTYPE html>
 <html>
@@ -300,7 +286,6 @@ class ViewRenderer:
     </script>
 </head>
 <body>
-    {conn_banner}
     {body_content}
 </body>
 </html>"""
@@ -319,13 +304,6 @@ class ViewRenderer:
                 <input type="password" name="password" required style="width:95%;"><br><br>
                 <button type="submit" style="width:100%;">Login</button>
             </form>
-            <hr>
-            <small>
-                <b>Demo Accounts:</b><br>
-                Admin: admin@campus.edu / admin123<br>
-                User 1: student1@campus.edu / pass123<br>
-                User 2: student2@campus.edu / pass123
-            </small>
         </div>
         """
         return ViewRenderer.layout("Login - Lost & Found", content)
